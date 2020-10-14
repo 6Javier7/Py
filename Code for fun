@@ -1,0 +1,446 @@
+
+##paquetes
+library(readxl)
+library(ggplot2)
+library(data.table)
+library(tidyr)
+library(dplyr)
+library(purrr)
+library(lattice)
+library(boot)
+library(nlme)
+library(MASS)
+libray(lme4)
+library(lsmeans)
+library(vegan)
+library(rjags)
+
+
+
+
+##Dato
+morfo <- read_excel("Morfos.xlsx")
+morfo <- read.csv("morfos4.csv")
+
+foro <- read_excel("Forofitos.xlsx")
+zona <- read_excel("Zona.xlsx")
+dat <- merge(morfo, foro)
+data <- merge(zona, dat) #datos
+str(data)
+data1 <- data[, c(3, 4, 11, 12, 5, 6, 7, 8)] 
+write.csv(data1, "datos atuncela.csv") #Join
+
+data <- data.table(data)
+data[, pre := rep(1, nrow(data))]
+morfo1 <- with(data, unique(Morfo))
+label <- 1:length(morfo1)
+morfo2 <- data.table("Morfo" = morfo1, "Label" = label)
+data <- merge(data, morfo2)
+
+dat <- data %>% group_by(Nombre, Forofito, ID_Forofito) %>% summarise(Morfos = sum(pre), CAP = mean(CAP), .groups = "drop")
+dat1 <- data %>% group_by(Nombre, Forofito, ID_Forofito) %>% summarise(Riqueza = sum(pre), CAP = mean(CAP), .groups = "drop")
+dat2 <- dat1 %>% group_by(Nombre, Forofito) %>% summarise(Promedio = mean(Riqueza), Desviacion = sd(Riqueza), CAP = mean(CAP), .groups = "drop")
+dat3 <- dat1 %>% group_by(Nombre, Forofito) %>% summarise(Promedio = mean(Riqueza), Desviacion = sd(Riqueza), CAP = mean(CAP), .groups = "drop")
+dat10 <- data[ , lapply(.SD, sum), .SDcols = "pre", by = c("Nombre","Forofito", "Label", "Morfo")]
+dat11 <- with(dat10, split(dat10, Forofito))
+datt <- data[ , lapply(.SD, sum), .SDcols = "pre", by = "Morfo"]
+todo <- datt$pre
+
+with(dat1, boxplot(Riqueza ~ Forofito))
+
+full <- data.frame(d, d2)
+colnames(full) <- c("Zona", "Forofito")
+
+###Morfos por Zonas
+png("plotoZonas.png", height = 580, width = 580)
+ggplot(data = full, mapping = aes(x = Forofito, fill = Zona)) +
+   geom_bar(alpha = 0.5, position = "fill", width = 0.5) +
+    scale_fill_manual(values = c("khaki2", "olivedrab")) +#honeydew3, khaki2
+     labs(y = "Proporción") +
+       theme_classic()
+dev.off()
+
+dat <- dat %>%
+mutate(Tipo = ifelse(Forofito %in% c("Opuntia", "Pilosocereus", "Stenocereus"), "Cactus", ifelse(Forofito %in% c("Vachellia", "Zanthoxylum"), "Árbol", "Trambo")))
+
+##boxplots por especie de forofito de numero de morfos
+png("plotomorfos.png", height = 580, width = 580)
+ggplot(dat, aes(Morfos, Forofito, col = Tipo, fill = Tipo)) + 
+ geom_violin(scale = "area", alpha = 0.5 ) +
+ scale_fill_manual(values = c("gold3", "forestgreen")) +
+  scale_colour_manual(values = c("gold3", "forestgreen")) +
+   theme_minimal()
+dev.off()
+
+#CAP
+png("plotoCAP.png", height = 580, width = 580)
+with(dat, densityplot(~CAP|Forofito, groups = Tipo, par.settings = list(superpose.symbol = list(alpha = 1.0, col = c("gold3", "forestgreen"), pch = 19),
+                                                                        superpose.line = list(alpha = 0.5, col = c("gold3", "forestgreen")))))
+dev.off()
+with(dat, boxplot(CAP ~ Forofito))
+
+##Modelos
+m1 <- lm(Promedio ~ Forofito + Nombre, data = dat2)#el modelo con mas soporte tanton en BIC como en AIC es el que no tiene CAP
+
+
+m2 <- glm(formula = Riqueza ~ Forofito + Nombre, family = poisson, 
+    data = dat1)
+
+m2$deviance/m2$df.residual#datos subdispersos
+
+
+m1 <- glm(formula = Riqueza ~ Forofito + Nombre, family = poisson, 
+    data = dat1)#el AIC y el BIC dio lo mismo que el modelo poisson 
+
+dat1$ID_Foroftito <- as.factor(dat1$ID_Foroftito)
+m3 <- glmer(Riqueza ~ (1|ID_Forofito) + Forofito + Nombre, family = "poisson", data = dat1)#tiene menos soporte que el modelo fijo
+
+con <- emmeans(m2, ~Forofito, method = "tukey")
+contrast(con)
+
+coefficients(m2)
+
+##Bootstraping
+
+promedio <- function(data,i){
+        d<-data[i,]
+        return(with(d, c(mean(Riqueza), sd(Riqueza))))
+}
+
+bootpro <- boot(dat1, promedio, R = 20000)
+boot.ci(bootpro)
+plot(bootpro)
+with(dat1, hist(Morfos))
+
+intopu <- c(2.935,  4.641)
+medopu <- c(3.7, 0.4141739)
+sdopu <- c(1.860249, 0.3812247) #mayor error en la varicaion
+
+intpi <- c(3.615,  5.256)
+medpi <- c(4.4, 0.4010511) # Media y Error estandar
+sdpi <- c(1.818038, 0.3083666)
+
+intste <- (4.059,  5.507)
+medste <- c(4.7, 0.3374399)
+sdste <- c(1.49032, 0.2816162)
+
+intzan <- (5.783,  7.551)
+medzan <- c(6.5, 0.4287603) 
+sdzan <- c(1.926956, 0.2617702) #mayor varicion
+
+intva <- c(5.895,  7.617)
+medva <- c(6.7, 0.4107807) #mayor media
+sdva <- c(1.838191, 0.2957465)
+
+#Herarchical Model
+mod_string1 = "model {
+for (i in 1:length(Riqueza)) {
+        Riqueza[i] ~ dpois(lam[Forofito[i]])
+        
+    }
+    
+    for (j in 1:max(Forofito)) {
+        lam[j] ~ dgamma(alfa, beta)
+    }
+
+    mu ~ dgamma(2.0, 1.0/2.6)
+    sig ~ dexp(1.0)
+
+    alfa = mu^2 / sig^2
+    beta = mu / sig^2
+}"
+
+
+
+params1 <- c("lam", "mu", "sig")
+Forofito <- as.numeric(as.factor(dat1$Forofito))
+Riqueza <- dat1$Riqueza
+data_jags1 <- data.frame(Riqueza, Forofito)
+data_jags1 <- as.list(data_jags1)
+mod1 <- jags.model(textConnection(mod_string1), data = data_jags1, n.chains = 3)
+update(mod1, 1e3)
+
+mod_sim <- coda.samples(model = mod1,
+                        variable.names = params1,
+                        n.iter = 2e4)
+
+mod_csim <- as.mcmc(do.call(rbind, mod_sim)) # combined chains
+xyplot(mod_csim)
+densityplot(mod_csim, layout=c(3,2))#Displaying the posterior distributions
+
+
+png("plotomcmc.png", height = 580, width = 580)
+plot(mod_sim)
+gelman.diag(mod_sim) #te dice cuantos paramtros se deberia tener si hay convergencia
+autocorr.diag(mod_sim)# si hay auto correlacion entre las simulaciones
+autocorr.plot(mod_sim)
+effectiveSize(mod_sim)#numero efectivo de simulaciones si quieres tener un posterior interval se debe tener un tamaño efectivo grande 3000 de cada parametro
+raftery.diag(mod1)
+dic1 <- dic.samples(mod1, n.iter = 1e3)#mientras mas pequeña mas soporte el modelo deviance information criterion
+
+#Cluster
+pres <- read_excel("pres.xls")
+pres[is.na(pres)] <- 0
+rownames(pres) <- c("Opuntia","Pilosocereus","Stenocereus","Vachellia","Zanthoxylum")
+d <- dist(pres, method = "euclidean")
+fit <- hclust(d, method = "ward")
+plot(fit)
+
+pres <- read_excel("prest2.xlsx")
+pres[is.na(pres)] <- 0
+rownames(pres) <- c("OpuntiaI", "OpuntiaL", "PilosocereusI", "PilosocereusL", "StenocereusI", "StenocereusL", "VachelliaI", "VachelliaL","ZanthoxylumI", "ZanthoxylumL")
+d <- dist(pres, method = "euclidean")
+
+ord1 <- decorana(pres[,-1])#correspondence analisys
+ord <- metaMDS(pres[, -1])
+plot(ord, type = "n")
+points(ord, cex = 0.8, pch = 21, col = "red", bg = "yellow")
+text(ord, display = "spec", cex = 0.7, col = "blue")
+
+data.scores <- as.data.frame(scores(ord))
+data.scores$site <- rownames(data.scores)
+grp <- row.names(pres)
+data.scores$grp <- grp
+data.scores$Zona <- rep(c("Intenso", "Leve"), 5)
+data.scores$Tipo <- c(rep("Cactus", 6), rep("Árbol", 4))
+data.scores$Forofito <- rep(c("Opuntia","Pilosocereus","Stenocereus","Vachellia","Zanthoxylum"), each = 2)
+
+head(data.scores)
+species.scores <- as.data.frame(scores(ord, "species"))
+species.scores$species <- rownames(species.scores)
+head(species.scores)
+
+colors1 <- c("turquoise", "red", "orange", "violet", "yellow")
+colors2 <- c("limegreen", "darkolivegreen1", "yellowgreen", "peachpuff", "coral")
+
+pal <- colorRampPalette(colors2)
+colors <- pal(10)
+
+png("plotoNMDS.png", height = 580, width = 580)
+ggplot() + 
+  geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, colour = Zona, shape = Forofito), size = 3, alpha = .5) + # add the point markers
+  scale_colour_manual(values = c("khaki2", "olivedrab")) +
+  scale_shape_manual(values = c(15, 16, 17, 18, 13)) +
+  labs(colour = "Zona") +
+  coord_equal() +
+  theme_classic()
+dev.off()
+
+ggplot() + 
+  geom_point(data = data.scores, aes(x = NMDS1, y = NMDS2, colour = Tipo), size = 3, alpha = 0.5) + # add the point markers
+  scale_colour_manual(values = c("gold3", "forestgreen")) +
+  labs(colour = "Tipo") +
+  coord_equal() +
+  theme_classic()
+
+  ##UNTB
+
+  untb2 <- function(theta, data = NULL, S = NULL, J = NULL){
+    d <- sort(data)
+    spec <- table(d) 
+    phis <- as.numeric(names(spec))
+    J <- sum(d)
+    S <- length(d)
+    k <- 1:J
+    return((S * log(theta) + sum(log(factorial(J)))) - (sum(log(spec^phis)) +  sum(log(factorial(phis))) + sum(log(theta + (k - 1)))))}
+
+funboot <- function(data,i){
+        d <- data[i]
+        interval <- c(0.001/1000, 1000)
+        optimize(f = untb2, interval = interval, maximum = T,
+             data = d, S = S, J = J) -> out
+             return(out$maximum)}
+
+boottet <- boot(todo, funboot, R = 20000)
+tod <- boot.ci(boottet)
+
+##Simulacion UNTB
+
+neutral3 = function(data, datam, x, theta, nsim = 10, D = 1, cycles = 1e4) {
+    d <- sort(data[[x]]$pre)
+    label <- sort(data[[x]]$Label)
+    J <- sum(d)
+    S <- length(d)
+    
+    dm <- sort(datam)
+    Jm <- sum(dm)
+    Sm <- length(dm)
+    nu <- theta/(theta + sum(dm)*10 - 1)
+    m <- 1.0
+    comu <- matrix(nrow = J, ncol = nsim)
+    wc <- matrix(nrow = J, ncol = nsim)
+    Jm <- Jm*10
+    meta <- matrix(nrow = Jm, ncol = nsim)
+    wm <- matrix(nrow = Jm, ncol = nsim)
+    comu[,1] <- rep(label, d)
+    meta[,1] <- rep(1:Sm, dm*10)
+
+    for ( i in 2:nsim){   
+                        k = i - 1
+
+                        cod.sp <- comu[,k]
+                        meta.sp <- meta[,k] 
+                        
+                        deathk <- sample(1:J, D)
+                        meta.deathk <- sample(1:Jm, D)
+                        ##Births                    
+                        outside <- sample(c(T, F), size = D, replace = T, prob = c(m, 1-m))
+                        
+                        if(runif(1) < nu){
+                           meta.outside <- T
+                         } else {meta.outside <- F}
+                        
+                        birthkin <- sample(1:J, D - sum(outside), replace = T)
+                        meta.birthkin <- sample(1:Jm, D - sum(meta.outside))
+    
+                        birthkout <- sample(1:Jm, sum(outside), replace = T)
+                        meta.birthkout <- sample(1:Jm, sum(meta.outside), replace = T)              
+                        
+                        ##Subtitutions
+                        if(length(birthkin) > 0){
+                           cod.sp[deathk[!outside]] <- cod.sp[birthkin]
+                         }
+                        
+                        if(length(birthkout) > 0){
+                           cod.sp[deathk[outside]] <- meta.sp[birthkout]
+                         }
+                         if(length(meta.birthkin) > 0){
+                         meta.sp[meta.deathk[!meta.outside]] <- meta.sp[meta.birthkin]
+                         }
+    
+                         if(length(meta.birthkout) > 0){
+                         meta.sp[meta.deathk[meta.outside]] <- max(meta.sp) + 1
+                         
+                         }
+                         cod.sp -> comu[,i]
+                         meta.sp -> meta[,i]
+                         
+                         }
+return(comu)}
+
+j <- c(81, 92, 93, 150, 140, 556)
+masi <- c(8.869934, 16.01548, 10.15438, 11.58415, 16.07991, 14.96903)
+set.seed(950728)
+dat10 <- data[ , lapply(.SD, sum), .SDcols = "pre", by = c("Nombre","Forofito", "Label", "Morfo")]
+dat11 <- with(dat10, split(dat10, Forofito))
+datt <- data[ , lapply(.SD, sum), .SDcols = "pre", by = "Morfo"]
+todo <- datt$pre
+nsim <- 1e3
+pri <- neutral3(data = dat11, datam = todo, x = 1, theta = 14.96903, nsim = nsim)
+tab <- apply(pri, 2, table)
+
+opu <- tab[nsim:(nsim-99)]
+largo <- c()
+for(i in 1:100){
+    largo[i] <- length(opu[[i]])
+}
+labs <- paste0(rep("Opuntia", 100), rep(1:100, largo))
+opu1 <- unlist(opu)
+spp <- names(opu1)
+prueba <- cbind(labs, spp, opu1)
+colnames(prueba) <- c("Simulacion", "Especie", "Abundancia")
+
+pri <- neutral3(data = dat11, datam = todo, x = 2, theta = 14.96903, nsim = nsim)
+tab <- apply(pri, 2, table)
+
+pilo <- tab[nsim:(nsim-99)]
+largo <- c()
+for(i in 1:100){
+    largo[i] <- length(pilo[[i]])
+}
+labs <- paste0(rep("Pilosocereus", 100), rep(1:100, largo))
+pilo1 <- unlist(pilo)
+spp <- names(pilo1)
+prueba1 <- cbind(labs, spp, pilo1)
+colnames(prueba1) <- c("Simulacion", "Especie", "Abundancia")
+
+pri <- neutral3(data = dat11, datam = todo, x = 3, theta = 14.96903, nsim = nsim)
+tab <- apply(pri, 2, table)
+
+ste <- tab[nsim:(nsim-99)]
+largo <- c()
+for(i in 1:100){
+    largo[i] <- length(ste[[i]])
+}
+labs <- paste0(rep("Stenocereus", 100), rep(1:100, largo))
+ste1 <- unlist(ste)
+spp <- names(ste1)
+prueba2 <- cbind(labs, spp, ste1)
+colnames(prueba2) <- c("Simulacion", "Especie", "Abundancia")
+
+pri <- neutral3(data = dat11, datam = todo, x = 4, theta = 14.96903, nsim = nsim)
+tab <- apply(pri, 2, table)
+
+vac <- tab[nsim:(nsim-99)]
+largo <- c()
+for(i in 1:100){
+    largo[i] <- length(vac[[i]])
+}
+labs <- paste0(rep("Vachellia", 100), rep(1:100, largo))
+vac1 <- unlist(vac)
+spp <- names(vac1)
+prueba3 <- cbind(labs, spp, vac1)
+colnames(prueba3) <- c("Simulacion", "Especie", "Abundancia")
+
+pri <- neutral3(data = dat11, datam = todo, x = 5, theta = 14.96903, nsim = nsim)
+tab <- apply(pri, 2, table)
+
+zan <- tab[nsim:(nsim-99)]
+largo <- c()
+for(i in 1:100){
+    largo[i] <- length(zan[[i]])
+}
+labs <- paste0(rep("Zanthoxyllum", 100), rep(1:100, largo))
+zan1 <- unlist(zan)
+spp <- names(zan1)
+prueba4 <- cbind(labs, spp, zan1)
+colnames(prueba4) <- c("Simulacion", "Especie", "Abundancia")
+
+combinado <- rbind(prueba, prueba1, prueba2, prueba3, prueba4)
+
+combinado <- data.frame(Simulacion = combinado[,1], Especie = combinado[,2], Abundancia = combinado[,3])
+combinado[,3] <- as.numeric(as.character(combinado[,3]))
+
+prese <- combinado %>% group_by(Simulacion) %>% spread(Especie, Abundancia)
+
+prese[is.na(prese)] <- 0
+rownames(prese) <- prese[,1][[1]]
+
+
+diste <- vegdist(prese[,-1], "bray")
+z1 <- as.matrix(diste)
+
+op1 <- z1[1:100,101:200]#opu-pilo
+os1 <- z1[1:100,201:300]#opu-ste
+ov1 <- z1[1:100,301:400]#opu-vac
+oz1 <- z1[1:100,401:500]#opu-zan
+ps1 <- z1[101:200,201:300]#pilo-ste
+pv1 <- z1[101:200,301:400]#pilo-vac
+pz1 <- z1[101:200,401:500]#pilo-zan
+sv1 <- z1[201:300,301:400]#ste-vac
+sz1 <- z1[201:300,401:500]#ste-zan
+vz1 <- z1[301:400,401:500]#vac-zan
+
+foros <- with(data, unique(Forofito))
+
+op2 <- cbind(rep(foros[4], 100), rep(foros[5], 100), colMeans(op1))
+os2 <- cbind(rep(foros[4], 100), rep(foros[2], 100), colMeans(os1))
+ov2 <- cbind(rep(foros[4], 100), rep(foros[1], 100), colMeans(ov1))
+oz2 <- cbind(rep(foros[4], 100), rep(foros[3], 100), colMeans(oz1))
+ps2 <- cbind(rep(foros[5], 100), rep(foros[2], 100), colMeans(ps1))
+pv2 <- cbind(rep(foros[5], 100), rep(foros[1], 100), colMeans(pv1))
+pz2 <- cbind(rep(foros[5], 100), rep(foros[3], 100), colMeans(pz1))
+sv2 <- cbind(rep(foros[2], 100), rep(foros[1], 100), colMeans(sv1))
+sz2 <- cbind(rep(foros[2], 100), rep(foros[3], 100), colMeans(sz1))
+vz2 <- cbind(rep(foros[1], 100), rep(foros[3], 100), colMeans(vz1))
+
+
+simu <- rbind(op2, os2, ov2, oz2, ps2, pv2, pz2, sv2, sz2, vz2)
+simu <- data.frame(Forofito1 = simu[,1], Forofito2 = simu[,2], BrayCurtis = simu[,3])
+simu[,3] <- as.numeric(as.character(simu[,3]))
+
+lines <- c(0.4682081, 0.4597701, 0.4891775, 0.5022624, 0.3297297, 0.4628099, 0.4137931, 0.4320988, 0.5450644, 0.4068966)
+obser <- rep(lines, each = 100)
+inter2 <- cbind(simu, obser)
+
+ggplot(inter2, aes(BrayCurtis)) + geom_histogram() + facet_wrap(Forofito1~Forofito2) + geom_vline(aes(xintercept = obser, col = "red"), linetype = "dashed") + labs(colour = "Observado", x = "Bray-Curtis")
